@@ -1,0 +1,29 @@
+version: "3.9"
+
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      - .:/code
+    depends_on:
+      - db
+
+  # Sample Postgres instance so you have something real to test the
+  # SQLSource path against, beyond just Excel uploads.
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: nl2sql
+      POSTGRES_PASSWORD: nl2sql_pw
+      POSTGRES_DB: sample_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:
