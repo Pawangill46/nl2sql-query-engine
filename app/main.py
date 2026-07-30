@@ -1,5 +1,11 @@
 ﻿"""
-FastAPI app tying the pieces together.
+FastAPI app tying the pieces together:
+  POST /upload      -> Excel/CSV file -> ExcelSource
+  POST /connect      -> DB connection string -> SQLSource
+  POST /query        -> natural language question -> SQL -> results
+
+IMPORTANT: load_dotenv() must run before any of our own modules are
+imported, because llm_service.py reads GEMINI_API_KEY at import time.
 """
 
 from dotenv import load_dotenv
@@ -9,6 +15,7 @@ import os
 import shutil
 import tempfile
 from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy import text
 
@@ -18,6 +25,21 @@ from app.sql_safety import validate_select_only, UnsafeQueryError
 from app.llm_service import generate_sql_with_retry
 
 app = FastAPI(title="NL-to-SQL Query Engine")
+
+# Allows the React frontend (running on a different port during local
+# dev, e.g. localhost:5173) to call this API. Restricted to localhost
+# origins -- tighten this before ever deploying publicly.
+app.add_middleware(
+    CORSMiddleware,
+    # Wide open for local dev -- avoids chasing exact port/origin mismatches
+    # across different dev environments (plain Windows, WSL, containers,
+    # forwarded ports). Tighten this to specific origins before ever
+    # deploying publicly.
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 _active_source = {"source": None, "dialect": "sqlite"}
 
@@ -42,7 +64,7 @@ async def upload_file(file: UploadFile = File(...)):
     _active_source["dialect"] = "sqlite"
 
     schema = _active_source["source"].get_schema_summary()
-    return {"status": "loaded", "tables": list(schema.keys())}
+    return {"status": "loaded", "tables": schema}
 
 
 @app.post("/connect")
@@ -55,7 +77,7 @@ async def connect_database(req: ConnectRequest):
 
     _active_source["source"] = source
     _active_source["dialect"] = req.dialect
-    return {"status": "connected", "tables": list(schema.keys())}
+    return {"status": "connected", "tables": schema}
 
 
 @app.post("/query")
