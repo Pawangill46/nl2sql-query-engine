@@ -1,15 +1,14 @@
-"""
-Talks to the Claude API to turn (schema + question) into SQL, and
-implements the error-retry loop: if execution fails, we feed the actual
-DB error back to the model and ask it to fix its own query.
-
-Day 4 (first working query) and Day 5 (retry loop) live here.
+﻿"""
+Talks to the Gemini API to turn (schema + question) into SQL, and
+implements the error-retry loop.
 """
 
 import os
-import anthropic
+from google import genai
 
-client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+
+MODEL_NAME = "gemini-3.6-flash"
 
 SYSTEM_PROMPT = """You are a SQL generation assistant. Given a database \
 schema and a natural language question, output ONLY a single valid SELECT \
@@ -26,6 +25,14 @@ def _format_schema(schema: dict) -> str:
     return "\n".join(lines)
 
 
+def _call_gemini(prompt: str) -> str:
+    response = client.models.generate_content(
+        model=MODEL_NAME,
+        contents=f"{SYSTEM_PROMPT}\n\n{prompt}",
+    )
+    return response.text.strip()
+
+
 def generate_sql(question: str, schema: dict, dialect: str = "sqlite") -> str:
     prompt = f"""Database dialect: {dialect}
 
@@ -35,25 +42,12 @@ Schema:
 Question: {question}
 
 SQL:"""
-
-    response = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=500,
-        system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return response.content[0].text.strip()
+    return _call_gemini(prompt)
 
 
 def generate_sql_with_retry(
     question: str, schema: dict, execute_fn, dialect: str = "sqlite", max_retries: int = 1
 ):
-    """
-    execute_fn: a callable that takes a SQL string, runs it, and either
-    returns results or raises an exception. Keeping this injected (rather
-    than importing the DB layer here) keeps this module testable in
-    isolation -- worth mentioning if asked about your testing approach.
-    """
     sql = generate_sql(question, schema, dialect)
     attempt = 0
     last_error = None
@@ -70,7 +64,6 @@ def generate_sql_with_retry(
             attempt += 1
             if attempt > max_retries:
                 break
-            # Feed the real DB error back to the model and ask for a fix.
             fix_prompt = f"""The following SQL failed:
 {sql}
 
@@ -81,12 +74,6 @@ Schema:
 {_format_schema(schema)}
 
 Fix the query. Output ONLY the corrected SQL, no explanation."""
-            response = client.messages.create(
-                model="claude-sonnet-4-6",
-                max_tokens=500,
-                system=SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": fix_prompt}],
-            )
-            sql = response.content[0].text.strip()
+            sql = _call_gemini(fix_prompt)
 
     return {"sql": sql, "result": None, "error": last_error, "attempts": attempt}

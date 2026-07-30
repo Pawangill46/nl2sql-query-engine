@@ -1,16 +1,13 @@
+﻿"""
+FastAPI app tying the pieces together.
 """
-FastAPI app tying the pieces together:
-  POST /upload      -> Excel/CSV file -> ExcelSource
-  POST /connect      -> DB connection string -> SQLSource
-  POST /query        -> natural language question -> SQL -> results
 
-Kept intentionally thin: this file should mostly call into the other
-modules, not contain business logic itself.
-"""
+from dotenv import load_dotenv
+load_dotenv()
 
 import os
 import shutil
-import pandas as pd
+import tempfile
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import text
@@ -22,10 +19,6 @@ from app.llm_service import generate_sql_with_retry
 
 app = FastAPI(title="NL-to-SQL Query Engine")
 
-# NOTE: in-memory session store for now (single user, local dev).
-# Day 6+/Phase 4: replace with a real session/user model if you want
-# multi-user support -- flagging this now so it's a known limitation,
-# not a surprise.
 _active_source = {"source": None, "dialect": "sqlite"}
 
 
@@ -40,7 +33,7 @@ class QueryRequest(BaseModel):
 
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
-    tmp_path = f"/tmp/{file.filename}"
+    tmp_path = os.path.join(tempfile.gettempdir(), file.filename)
     with open(tmp_path, "wb") as f:
         shutil.copyfileobj(file.file, f)
 
